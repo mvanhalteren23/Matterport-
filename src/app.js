@@ -42,7 +42,7 @@ const FLOORS = {
   carpet_grey: { label: 'Grey carpet', kind: 'noise', c: ['#8f9296', '#878a8e'], fine: true },
   cork: { label: 'Cork', kind: 'noise', c: ['#b58a5a', '#a67c4e'], fine: true }
 };
-const PAINTS = { white: '#f3f1ea', 'warm white': '#efe9dc', cream: '#ece2c9', sage: '#a9b8a0', 'forest green': '#3f5e4b', green: '#6f9273', navy: '#27374d', blue: '#7d9bb5', 'sky blue': '#b3cddd', teal: '#3e7c7b', charcoal: '#3c4043', grey: '#b5b6b3', gray: '#b5b6b3', 'light grey': '#d7d8d5', greige: '#cfc7b8', beige: '#dccfb6', taupe: '#b3a594', terracotta: '#c0704d', blush: '#e3c3b8', pink: '#e6b9c0', yellow: '#ead48a', mustard: '#c9a13b', black: '#232526', red: '#a8443a', plum: '#6b4460', lavender: '#bfb5d6', cedar: '#a8683f' };
+const PAINTS = { white: '#f3f1ea', 'warm white': '#efe9dc', cream: '#ece2c9', sage: '#a9b8a0', 'forest green': '#3f5e4b', green: '#6f9273', navy: '#27374d', blue: '#7d9bb5', 'sky blue': '#b3cddd', teal: '#3e7c7b', charcoal: '#3c4043', grey: '#b5b6b3', gray: '#b5b6b3', 'light grey': '#d7d8d5', greige: '#cfc7b8', beige: '#dccfb6', taupe: '#b3a594', terracotta: '#c0704d', blush: '#e3c3b8', pink: '#e6b9c0', yellow: '#ead48a', mustard: '#c9a13b', black: '#232526', red: '#a8443a', plum: '#6b4460', lavender: '#bfb5d6', cedar: '#a8683f', 'cedar panel': '#9a5b32', 'walnut panel': '#6e3f26', 'birch panel': '#c99a62', 'fir panel': '#b5753f', 'oak panel': '#b8894f' };
 const FIX = {
   counter: { label: 'Counter', w: 6, d: 2.1, color: '#e7e3d8', top: '#5d5f5d' },
   island: { label: 'Kitchen island', w: 6, d: 3, color: '#3f5e4b', top: '#e9e6df' },
@@ -77,7 +77,7 @@ const OPEN = {
 };
 
 /* ---------- state ---------- */
-const STORE_KEY = 'russell1346.plan.v1';
+const STORE_KEY = 'russell1346.plan.v2';
 let model = clone(AS_BUILT);
 let log = [];
 let undoStack = [], redoStack = [];
@@ -95,6 +95,17 @@ function polyArea(p) { let s = 0; for (let i = 0; i < p.length; i++) { const a =
 function inPoly(x, y, p) { let c = false; for (let i = 0, j = p.length - 1; i < p.length; j = i++) { const xi = p[i][0], yi = p[i][1], xj = p[j][0], yj = p[j][1]; if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) c = !c; } return c; }
 function bbox(p) { const xs = p.map((q) => q[0]), ys = p.map((q) => q[1]); return { x0: Math.min(...xs), x1: Math.max(...xs), y0: Math.min(...ys), y1: Math.max(...ys) }; }
 function roomAt(x, y, m) { m = m || model; let best = null, ba = 1e9; for (const r of m.rooms) { if (inPoly(x, y, r.poly)) { const a = polyArea(r.poly); if (a < ba) { ba = a; best = r; } } } return best; }
+/* Ceiling/wall top at a point: flat wallHeight, or the roof line inside a vault (tol widens the vault edge so boundary walls rise with it). */
+function topAt(x, y, m, tol) {
+  m = m || model; tol = tol == null ? 0.3 : tol; let h = m.wallHeight;
+  for (const v of m.vaults || []) {
+    if (x < v.x0 - tol || x > v.x1 + tol || y < v.y0 - tol || y > v.y1 + tol) continue;
+    const yy = clamp(y, v.y0, v.y1), run = yy < v.ridge ? v.ridge - v.y0 : v.y1 - v.ridge;
+    h = Math.max(h, v.peak - (v.peak - v.eave) * Math.abs(yy - v.ridge) / Math.max(run, 0.1));
+  }
+  return h;
+}
+const floorAt = (x, y, m) => { const r = roomAt(x, y, m); return (r && r.floorZ) || 0; };
 function roomCentre(r) { if (r.label) return r.label; const b = bbox(r.poly); return [(b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2]; }
 function wallFrame(w) { const L = wlen(w) || 0.001; const ux = (w.b[0] - w.a[0]) / L, uy = (w.b[1] - w.a[1]) / L; return { L, ux, uy, nx: -uy, ny: ux }; }
 function sideRoom(w, s, side, m) { const f = wallFrame(w); const o = (w.t / 2 + 0.2) * side; return roomAt(w.a[0] + f.ux * s + f.nx * o, w.a[1] + f.uy * s + f.ny * o, m); }
@@ -125,8 +136,10 @@ function fitOpening(m, o) {
   const L = wlen(w);
   o.w = clamp(o.w, 1, Math.max(1, L - 0.4));
   o.pos = clamp(o.pos, o.w / 2 + 0.2, L - o.w / 2 - 0.2);
-  o.sill = clamp(o.sill || 0, 0, m.wallHeight - 1);
-  o.h = clamp(o.h, 1, m.wallHeight - o.sill - 0.3);
+  const f = wallFrame(w), top = (s) => Math.min(w.h || 99, topAt(w.a[0] + f.ux * s, w.a[1] + f.uy * s, m));
+  const maxTop = Math.min(top(o.pos - o.w / 2), top(o.pos + o.w / 2));
+  o.sill = clamp(o.sill || 0, 0, maxTop - 1);
+  o.h = clamp(o.h, 1, maxTop - o.sill - 0.15);
 }
 function applyOp(m, op) {
   const t = op.op;
@@ -171,13 +184,15 @@ function applyOp(m, op) {
     if (Math.hypot(b[0] - a[0], b[1] - a[1]) < 0.5) throw new Error('Wall is too short');
     const w = { id: op.id && !wallById(op.id, m) ? String(op.id) : uid('w_new', m.walls), a, b, t: num(op.t, 0.4, 0.2, 1) };
     if (op.ext) w.ext = true;
-    m.walls.push(w); return 'Added a ' + ftin(wlen(w)) + ' wall';
+    if (op.h != null) w.h = num(op.h, 3.5, 1, 14);
+    m.walls.push(w); return 'Added a ' + ftin(wlen(w)) + (w.h ? ' low' : '') + ' wall';
   }
   if (t === 'update_wall') {
     const w = wallById(op.id, m); if (!w) throw new Error('No wall "' + op.id + '"');
     if (op.a) w.a = [num(op.a[0], w.a[0], -200, 300), num(op.a[1], w.a[1], -200, 300)];
     if (op.b) w.b = [num(op.b[0], w.b[0], -200, 300), num(op.b[1], w.b[1], -200, 300)];
     if (op.t != null) w.t = num(op.t, w.t, 0.2, 1);
+    if (op.h === null || op.h === 0 || op.h === 'full') delete w.h; else if (op.h != null) w.h = num(op.h, 3.5, 1, 14);
     m.openings.filter((o) => o.wall === w.id).forEach((o) => fitOpening(m, o));
     return 'Moved a wall';
   }
@@ -193,8 +208,21 @@ function applyOp(m, op) {
     if (op.poly) { if (!Array.isArray(op.poly) || op.poly.length < 3) throw new Error('A room outline needs 3 or more points'); r.poly = op.poly.map((p) => [num(p[0], 0, -200, 300), num(p[1], 0, -200, 300)]); delete r.label; }
     if (op.floor && FLOORS[op.floor]) r.floor = op.floor;
     if (op.wallColor) r.wallColor = toHex(op.wallColor, r.wallColor);
+    if (op.floorZ != null) { const z = num(op.floorZ, 0, -4, 4); if (z) r.floorZ = z; else delete r.floorZ; }
     if (r.poly.length < 3) { m.rooms.splice(m.rooms.indexOf(r), 1); throw new Error('A new room needs an outline'); }
     return (t === 'add_room' ? 'Added room ' : 'Updated ') + r.name;
+  }
+  if (t === 'add_vault') {
+    let b; if (op.room) { const rs = resolveRooms(m, op.room); b = bbox(rs.flatMap((r) => r.poly)); } else b = { x0: num(op.x0, 0, -50, 200), x1: num(op.x1, 10, -50, 200), y0: num(op.y0, 0, -50, 200), y1: num(op.y1, 10, -50, 200) };
+    if (b.x1 - b.x0 < 2 || b.y1 - b.y0 < 2) throw new Error('A vault needs an area at least 2 ft each way');
+    m.vaults = m.vaults || [];
+    const v = { id: uid('vault_', m.vaults), x0: r2(b.x0), x1: r2(b.x1), y0: r2(b.y0), y1: r2(b.y1), ridge: r2(op.ridge != null ? num(op.ridge, 0, b.y0, b.y1) : (b.y0 + b.y1) / 2), eave: num(op.eave, m.wallHeight, 6, 14), peak: num(op.peak, m.wallHeight + 4, 7, 20), finish: toHex(op.finish, '#b7773f') };
+    if (v.peak < v.eave) v.peak = v.eave;
+    m.vaults.push(v); m.openings.forEach((o) => { try { fitOpening(m, o); } catch (e) { /* wall gone */ } }); return 'Vaulted the ceiling to ' + ftin(v.peak);
+  }
+  if (t === 'remove_vault') {
+    const i = (m.vaults || []).findIndex((v) => v.id === op.id); if (i < 0) throw new Error('No vault "' + op.id + '"');
+    m.vaults.splice(i, 1); m.openings.forEach((o) => { try { fitOpening(m, o); } catch (e) { /* wall gone */ } }); return 'Flattened a vaulted ceiling to ' + ftin(m.wallHeight);
   }
   if (t === 'remove_room') { const r = resolveRooms(m, op.id || op.room)[0]; m.rooms.splice(m.rooms.indexOf(r), 1); return 'Removed the ' + r.name + ' floor area'; }
   if (t === 'add_fixture') {
@@ -320,7 +348,7 @@ function disposeGroup(g) { g.traverse((o) => { if (o.geometry) o.geometry.dispos
 
 function rebuild() {
   disposeGroup(world); pickables = []; labelsEl.textContent = ''; labelItems = [];
-  const H = model.wallHeight, viewH = cutLow && view !== 'walk' ? 3.6 : H;
+  const H = model.wallHeight, viewH = cutLow && view !== 'walk' ? 3.6 : 100;
   clipPlane.constant = viewH + 0.001;
   // ground
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(600, 600), mat('#7f9471', { roughness: 1 }));
@@ -331,12 +359,13 @@ function rebuild() {
     const sh = new THREE.Shape(); r.poly.forEach((p, k) => (k ? sh.lineTo(p[0], -p[1]) : sh.moveTo(p[0], -p[1])));
     const geo = new THREE.ShapeGeometry(sh); geo.rotateX(-Math.PI / 2);
     const m = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ map: floorTexture(r.floor), roughness: 0.8 }));
-    m.position.y = 0.002 * (i + 1); m.receiveShadow = true; m.userData = { kind: 'room', id: r.id }; world.add(m); pickables.push(m);
-    if (view === 'walk' && !r.outdoor) { const c = new THREE.Mesh(geo.clone(), new THREE.MeshBasicMaterial({ color: '#efede6', side: THREE.BackSide })); c.position.y = H; world.add(c); }
+    m.position.y = (r.floorZ || 0) + 0.002 * (i + 1); m.receiveShadow = true; m.userData = { kind: 'room', id: r.id }; world.add(m); pickables.push(m);
+    if (r.floorZ) { const sh2 = new THREE.Mesh(new THREE.ExtrudeGeometry(sh, { depth: Math.abs(r.floorZ), bevelEnabled: false }), mat(r.floorZ > 0 ? '#8a6a4a' : '#9a9a94')); sh2.rotation.x = -Math.PI / 2; sh2.position.y = Math.min(0, r.floorZ) + 0.001 * i; world.add(sh2); }
     const c = roomCentre(r), b = bbox(r.poly), d = el('div', { class: 'lbl' }, el('b', { text: r.name }), el('span', { text: ftin(b.x1 - b.x0 - 0.45) + ' × ' + ftin(b.y1 - b.y0 - 0.45) }));
     if (polyArea(r.poly) < 30) return;
-    labelsEl.append(d); labelItems.push({ el: d, p: new THREE.Vector3(c[0], 0.4, c[1]) });
+    labelsEl.append(d); labelItems.push({ el: d, p: new THREE.Vector3(c[0], 0.4 + (r.floorZ || 0), c[1]) });
   });
+  if (view === 'walk') buildCeilings();
   // walls
   const topM = mat('#2b3331', { roughness: 1 }), endM = mat('#d9d6cc');
   model.walls.forEach((w) => {
@@ -354,8 +383,11 @@ function rebuild() {
       const a = cs[i], b = cs[i + 1]; if (b - a < 0.01) continue;
       const mid = (a + b) / 2, o = ops.find((q) => mid > q.pos - q.w / 2 && mid < q.pos + q.w / 2);
       const mats = [endM, endM, topM, endM, mat(sideColor(mid, 1)), mat(sideColor(mid, -1))];
+      const top = (s) => Math.min(w.h || 99, topAt(w.a[0] + f.ux * clamp(s, 0, f.L), w.a[1] + f.uy * clamp(s, 0, f.L)));
+      const ta = Math.min(top(a), viewH), tb = Math.min(top(b), viewH);
       const piece = (y0, y1) => { y1 = Math.min(y1, viewH); if (y1 - y0 > 0.02) box(g, b - a, y1 - y0, w.t, mats, mid, y0, 0, ud); };
-      if (!o) piece(0, H); else { piece(0, o.sill); piece(o.sill + o.h, H); }
+      const toTop = (y0) => { if (Math.abs(ta - tb) < 0.02) piece(y0, ta); else slab(g, a, b, y0, ta, tb, w.t, mats[4], mats[5], ud); };
+      if (!o) toTop(0); else { piece(0, o.sill); toTop(o.sill + o.h); }
     }
     ops.forEach((o) => buildOpening(g, w, o));
   });
@@ -370,12 +402,41 @@ function rebuild() {
   if (tool && tool.p0) { const s = new THREE.Mesh(new THREE.SphereGeometry(0.35, 12, 8), mat('#f59e0b')); s.position.set(tool.p0[0], 0.4, tool.p0[1]); world.add(s); }
 }
 
+/* A wall piece whose top slopes (under a vaulted ceiling). */
+function slab(g, a, b, y0, ta, tb, t, matPos, matNeg, ud) {
+  if (Math.max(ta, tb) - y0 < 0.02) return;
+  const sh = new THREE.Shape([new THREE.Vector2(a, y0), new THREE.Vector2(b, y0), new THREE.Vector2(b, Math.max(tb, y0)), new THREE.Vector2(a, Math.max(ta, y0))]);
+  const core = new THREE.Mesh(new THREE.ExtrudeGeometry(sh, { depth: t, bevelEnabled: false }), mat('#2b3331', { roughness: 1 }));
+  core.position.z = -t / 2; core.castShadow = true; core.receiveShadow = true; core.userData = ud; pickables.push(core); g.add(core);
+  [[matPos, t / 2 + 0.004], [matNeg, -t / 2 - 0.004]].forEach(([m0, z]) => {
+    const face = new THREE.Mesh(new THREE.ShapeGeometry(sh), new THREE.MeshStandardMaterial({ color: m0.color, roughness: 0.85, side: THREE.DoubleSide, clippingPlanes: [clipPlane] }));
+    face.position.z = z; face.receiveShadow = true; face.userData = ud; pickables.push(face); g.add(face);
+  });
+}
+/* Walk-mode ceilings: 1 ft cells over indoor rooms, sloped where a vault is. */
+function buildCeilings() {
+  const pos = [], col = [], cA = new THREE.Color('#f2f0ea'), xs = [], ys = [];
+  model.rooms.forEach((r) => { if (!r.outdoor && r.id !== 'workshop') r.poly.forEach((p) => { xs.push(p[0]); ys.push(p[1]); }); });
+  if (!xs.length) return;
+  const x0 = Math.floor(Math.min(...xs)), x1 = Math.ceil(Math.max(...xs)), y0 = Math.floor(Math.min(...ys)), y1 = Math.ceil(Math.max(...ys));
+  const vaultAt = (x, y) => (model.vaults || []).find((v) => x >= v.x0 && x <= v.x1 && y >= v.y0 && y <= v.y1);
+  for (let x = x0; x < x1; x++) for (let y = y0; y < y1; y++) {
+    const r = roomAt(x + 0.5, y + 0.5); if (!r || r.outdoor || r.id === 'workshop') continue;
+    const v = vaultAt(x + 0.5, y + 0.5), h = (px, py) => (v ? topAt(clamp(px, v.x0, v.x1), clamp(py, v.y0, v.y1), model, 0) : model.wallHeight);
+    const q = [[x, y], [x + 1, y], [x + 1, y + 1], [x, y + 1]].map((p) => [p[0], h(p[0], p[1]) - 0.01, p[1]]);
+    [0, 1, 2, 0, 2, 3].forEach((k) => pos.push(...q[k]));
+    const c = v ? new THREE.Color(v.finish || '#b7773f') : cA; for (let k = 0; k < 6; k++) col.push(c.r, c.g, c.b);
+  }
+  const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3)); geo.computeVertexNormals();
+  world.add(new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ vertexColors: true, side: THREE.DoubleSide, roughness: 0.9 })));
+}
 function buildOpening(g, w, o) {
   const ud = { kind: 'opening', id: o.id }, t = w.t, fr = clipped('#f6f4ee'), y0 = o.sill, x0 = o.pos - o.w / 2, x1 = o.pos + o.w / 2, d = t + 0.12, j = 0.12;
   const glass = clipped('#bcd9e6', { transparent: true, opacity: 0.35, roughness: 0.1 });
   const frame = (sillPiece) => { box(g, j, o.h, d, fr, x0 + j / 2, y0, 0, ud); box(g, j, o.h, d, fr, x1 - j / 2, y0, 0, ud); box(g, o.w, j, d, fr, o.pos, y0 + o.h - j, 0, ud); if (sillPiece) box(g, o.w + 0.2, j, d + 0.15, fr, o.pos, y0, 0, ud); };
   // invisible-ish pick slab so the gap itself is selectable
   const pick = box(g, o.w, o.h, t * 0.6, clipped('#ffffff', { transparent: true, opacity: 0, depthWrite: false }), o.pos, y0, 0, ud); pick.castShadow = false;
+  if (w.h && o.type === 'opening') return; // a gap in a low wall needs no casing
   if (o.type === 'window') {
     frame(true); const p = box(g, o.w - 2 * j, o.h - 2 * j, 0.05, glass, o.pos, y0 + j, 0); p.castShadow = false;
     const n = Math.max(1, Math.round(o.panes || 1)); for (let k = 1; k < n; k++) box(g, 0.1, o.h - 2 * j, d * 0.7, fr, x0 + (o.w * k) / n, y0 + j, 0, ud);
@@ -401,7 +462,7 @@ function buildOpening(g, w, o) {
 function buildFixture(f) {
   const D = FIX[f.type] || FIX.box, g = new THREE.Group(), H = model.wallHeight, ud = { kind: 'fixture', id: f.id };
   const side = f.facing === 'e' || f.facing === 'w', W = side ? f.d : f.w, Dp = side ? f.w : f.d;
-  g.position.set(f.x + f.w / 2, 0, f.y + f.d / 2); g.rotation.y = { s: 0, e: Math.PI / 2, n: Math.PI, w: -Math.PI / 2 }[f.facing || 's']; world.add(g);
+  g.position.set(f.x + f.w / 2, floorAt(f.x + f.w / 2, f.y + f.d / 2), f.y + f.d / 2); g.rotation.y = { s: 0, e: Math.PI / 2, n: Math.PI, w: -Math.PI / 2 }[f.facing || 's']; world.add(g);
   const B = (w, h, d, c, x, y, z, o) => box(g, w, h, d, typeof c === 'string' ? mat(c, o) : c, x || 0, y || 0, z || 0, ud);
   const col = f.color || D.color || '#e7e3d8', top = f.top || D.top || '#5d5f5d';
   switch (f.type) {
@@ -420,8 +481,8 @@ function buildFixture(f) {
     case 'shower': { B(W, 0.25, Dp, '#e3e3de'); const gl = B(W - 0.1, 6.4, Dp - 0.1, '#bcd9e6', 0, 0.25, 0, { transparent: true, opacity: 0.22, roughness: 0.1 }); gl.castShadow = false; B(0.5, 0.08, 0.5, '#a9b1b5', 0, 6.5, -Dp / 2 + 0.5, { metalness: 0.7 }); break; }
     case 'toilet': { B(Math.min(W, 1.6), 1.25, 0.65, '#f6f6f3', 0, 1.2, -Dp / 2 + 0.33); const r = Math.min(W, 1.3) / 2; const c = new THREE.Mesh(new THREE.CylinderGeometry(r, r * 0.7, 1.3, 20), mat('#f6f6f3', { roughness: 0.3 })); c.scale.z = clamp((Dp - 0.7) / (2 * r), 0.8, 1.5); c.position.set(0, 0.65, -Dp / 2 + 0.65 + r * c.scale.z); c.castShadow = true; c.userData = ud; pickables.push(c); g.add(c); break; }
     case 'washer': case 'dryer': { B(W, 3.1, Dp, '#eceeef', 0, 0, 0, { roughness: 0.4 }); const c = new THREE.Mesh(new THREE.CylinderGeometry(Math.min(W, 2.4) * 0.3, Math.min(W, 2.4) * 0.3, 0.06, 24), mat('#3a4046')); c.rotation.x = Math.PI / 2; c.position.set(0, 1.7, Dp / 2 + 0.02); g.add(c); break; }
-    case 'fireplace': B(W, H + 0.3, Dp, '#7a3f31', 0, 0, 0, { roughness: 1 }); B(W * 0.5, 2.3, 0.12, '#17120f', 0, 0.5, Dp / 2 + 0.02); B(W * 0.75, 0.25, 0.5, '#5a3a2c', 0, 4, Dp / 2 + 0.2); break;
-    case 'hearth': B(W, f.h || 0.2, Dp, '#7b746d', 0, 0, 0, { roughness: 1 }); break;
+    case 'fireplace': B(W, topAt(f.x + f.w / 2, f.y + f.d / 2) + 0.3, Dp, f.color || '#4a3a33', 0, 0, 0, { roughness: 1 }); B(W * 0.5, 2.3, 0.12, '#17120f', 0, 0.5, Dp / 2 + 0.02); B(W * 0.75, 0.25, 0.5, '#5a3a2c', 0, 4, Dp / 2 + 0.2); break;
+    case 'hearth': B(W, f.h || 0.2, Dp, f.color || '#7b746d', 0, 0, 0, { roughness: 1 }); break;
     case 'woodstove': { B(W * 0.8, 2.3, Dp * 0.8, '#1c1c1c', 0, 0.5, 0, { roughness: 0.6 }); B(W * 0.5, 0.5, Dp * 0.5, '#1c1c1c'); const p = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.25, H - 2.8, 12), mat('#1c1c1c')); p.position.y = 2.8 + (H - 2.8) / 2; g.add(p); break; }
     case 'bed': B(W, 1.1, Dp, '#7b6a58'); B(W - 0.2, 0.7, Dp - 0.2, '#ecebe6', 0, 1.1, 0.05); B(W, 3.2, 0.25, '#7b6a58', 0, 0, -Dp / 2 + 0.12); B(W * 0.38, 0.3, 1.3, '#ffffff', -W * 0.23, 1.8, -Dp / 2 + 1.1); B(W * 0.38, 0.3, 1.3, '#ffffff', W * 0.23, 1.8, -Dp / 2 + 1.1); B(W - 0.15, 0.12, Dp * 0.55, f.color || '#5f7a8c', 0, 1.8, Dp * 0.2); break;
     case 'sofa': { const c = f.color || '#7c8f86'; B(W, 1.4, Dp, c); B(W, 1.5, 0.7, c, 0, 1.4, -Dp / 2 + 0.35); B(0.6, 0.7, Dp, c, -W / 2 + 0.3, 1.4, 0); B(0.6, 0.7, Dp, c, W / 2 - 0.3, 1.4, 0); break; }
@@ -433,15 +494,15 @@ function buildFixture(f) {
 
 /* ---------- cameras and views ---------- */
 let controls;
-const walk = { yaw: 1.0, pitch: -0.08, pos: new THREE.Vector3(21.2, 5.3, 24.2), keys: {}, goal: null };
+const walk = { yaw: -0.55, pitch: 0.05, pos: new THREE.Vector3(6.5, 5.3, 25.5), keys: {}, goal: null };
 function setView(v) {
   view = v; tool = null;
   document.querySelectorAll('#viewSeg button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.view === v)));
   controls.enabled = v !== 'walk'; controls.enableRotate = v === 'doll';
   sun.castShadow = v !== 'plan';
   camera.fov = v === 'plan' ? 30 : v === 'walk' ? 70 : 45; camera.near = v === 'walk' ? 0.15 : 0.5; camera.updateProjectionMatrix();
-  if (v === 'doll') { controls.maxPolarAngle = Math.PI * 0.49; const k = camera.aspect < 1 ? 1.9 : 1; controls.target.set(27, 0, 17); camera.position.set(27 - 15 * k, 50 * k, 17 + 49 * k); }
-  if (v === 'plan') { controls.maxPolarAngle = 0; controls.target.set(27.5, 0, 16); camera.position.set(27.5, camera.aspect < 1 ? 230 : 105, 16.01); }
+  if (v === 'doll') { controls.maxPolarAngle = Math.PI * 0.49; const k = camera.aspect < 1 ? 1.9 : 1; controls.target.set(29, 0, 17); camera.position.set(29 - 16 * k, 52 * k, 17 + 51 * k); }
+  if (v === 'plan') { controls.maxPolarAngle = 0; controls.target.set(29.5, 0, 16); camera.position.set(29.5, camera.aspect < 1 ? 240 : 112, 16.01); }
   $('#hint').textContent = v === 'walk' ? 'Drag to look around. Click a floor to walk there, or use the arrow keys.' : v === 'plan' ? 'Drag to pan, scroll to zoom. Click anything to edit it.' : 'Drag to orbit, scroll to zoom, right-drag to pan. Click anything to edit it.';
   labelsEl.hidden = v === 'walk' || !showLabels;
   controls.update(); rebuild();
@@ -484,7 +545,7 @@ canvas.addEventListener('pointerup', (e) => {
     if (d.changed) { undoStack.push({ model: d.before, log: JSON.stringify(log) }); redoStack = []; log.unshift({ t: d.kind === 'fixture' ? 'Moved a fixture' : 'Slid an opening along its wall', n: 1, at: Date.now() }); afterChange(); return; }
   }
   if (!p || p.moved) return;
-  if (view === 'walk') { setRay(e); const h = ray.intersectObjects(pickables.filter((m) => m.userData.kind === 'room'), false)[0]; if (h) walk.goal = new THREE.Vector3(h.point.x, 5.3, h.point.z); return; }
+  if (view === 'walk') { setRay(e); const h = ray.intersectObjects(pickables.filter((m) => m.userData.kind === 'room'), false)[0]; if (h) walk.goal = new THREE.Vector3(h.point.x, walk.pos.y, h.point.z); return; }
   if (tool && tool.type === 'wall') {
     const gp = groundAt(e); if (!gp) return; const q = [snap(gp.x), snap(gp.z)];
     if (!tool.p0) { tool.p0 = q; $('#hint').textContent = 'Now click where the wall ends.'; rebuild(); return; }
@@ -506,6 +567,7 @@ function frame(now) {
     if (k.arrowleft) walk.yaw += dt * 1.6; if (k.arrowright) walk.yaw -= dt * 1.6;
     if (f || s) { walk.goal = null; walk.pos.x += (-Math.sin(walk.yaw) * f + Math.cos(walk.yaw) * s) * dt * 7; walk.pos.z += (-Math.cos(walk.yaw) * f - Math.sin(walk.yaw) * s) * dt * 7; }
     if (walk.goal) { const d = walk.goal.clone().sub(walk.pos); if (d.length() < 0.15) walk.goal = null; else walk.pos.add(d.multiplyScalar(Math.min(1, dt * 4))); }
+    walk.pos.y += (5.3 + floorAt(walk.pos.x, walk.pos.z) - walk.pos.y) * Math.min(1, dt * 6);
     camera.position.copy(walk.pos); camera.rotation.set(walk.pitch, walk.yaw, 0, 'YXZ');
   } else controls.update();
   renderer.render(scene, camera);
@@ -576,7 +638,7 @@ function updateButtons() { $('#undoBtn').disabled = !undoStack.length; $('#redoB
 /* ---------- saving ---------- */
 function status(t) { $('#status').textContent = t; }
 function payload() { return JSON.stringify({ model, log }); }
-function adopt(json) { try { const d = JSON.parse(json); if (d && d.model && Array.isArray(d.model.walls) && Array.isArray(d.model.rooms)) { model = d.model; log = d.log || []; return true; } } catch (e) { /* ignore bad data */ } return false; }
+function adopt(json) { try { const d = JSON.parse(json); if (d && d.model && d.model.v === AS_BUILT.v && Array.isArray(d.model.walls) && Array.isArray(d.model.rooms)) { model = d.model; log = d.log || []; return true; } } catch (e) { /* ignore bad data */ } return false; }
 function scheduleSave() { try { localStorage.setItem(STORE_KEY, payload()); } catch (e) { /* storage unavailable */ } if (!db || !remoteLoaded) { status(db ? 'Loading saved plan…' : 'Saved in this browser'); return; } clearTimeout(saveTimer); status('Saving…'); saveTimer = setTimeout(pushSave, 900); }
 async function pushSave() { if (saving) { saveAgain = true; return; } saving = true; try { await db.doc('plans/main').set({ json: payload(), at: new Date().toISOString() }); status('Saved'); } catch (e) { status('Saved in this browser only'); } saving = false; if (saveAgain) { saveAgain = false; pushSave(); } }
 
@@ -586,8 +648,8 @@ const history = [];
 function buildPrompt(text) {
   const compact = JSON.stringify(model, (k, v) => (typeof v === 'number' ? r2(v) : v));
   return [
-    'You are the renovation planner built into a 3D model of a single-storey house (1346 Russell Road). Turn the request into edits to the model.',
-    'Geometry: units are feet. x increases east, y increases south, origin at the NW exterior corner. Walls are centreline segments a->b with thickness t; ext:true marks exterior walls. An opening belongs to one wall; pos is the distance in feet from the wall point a to the centre of the opening. Rooms are floor polygons. Fixtures are axis-aligned boxes: x,y is the NW corner, w is the size east-west, d is the size north-south, facing (n|s|e|w) is the direction the front faces. Wall height is model.wallHeight.',
+    'You are the renovation planner built into a 3D model of a single-storey 1963 house (1346 Russell Road), measured from a Matterport scan. Turn the request into edits to the model.',
+    'Geometry: units are feet. x increases east, y increases south, origin at the NW exterior corner. Walls are centreline segments a->b with thickness t; ext:true marks exterior walls. An opening belongs to one wall; pos is the distance in feet from the wall point a to the centre of the opening. Rooms are floor polygons. Walls may have h (a low wall, e.g. a pony wall). Rooms may have floorZ (feet above the main floor; the office is a 0.6 ft step-up, the carport is 1.9 ft lower). model.vaults are vaulted ceilings: a rectangle x0..x1, y0..y1 whose ceiling rises from eave height at y0 and y1 to peak at the ridge line y=ridge. Fixtures are axis-aligned boxes: x,y is the NW corner, w is the size east-west, d is the size north-south, facing (n|s|e|w) is the direction the front faces. Wall height is model.wallHeight.',
     'Current model JSON:', compact,
     'Flooring keys: ' + Object.keys(FLOORS).join(', '),
     'Fixture types: ' + Object.keys(FIX).join(', ') + ' (counter, island and vanity accept sink:true or cooktop:true, color and top)',
@@ -597,6 +659,7 @@ function buildPrompt(text) {
     '{"op":"set_floor","room":id|"all","material":key} {"op":"set_wall_color","room":id|"all","color":hex} {"op":"set_siding","color":hex} {"op":"set_wall_height","height":ft}',
     '{"op":"add_opening","wall":id,"type":t,"pos":ft,"w":ft,"h":ft,"sill":ft,"panes":n,"swing":"left"|"right"} {"op":"update_opening","id":id,...} {"op":"remove_opening","id":id}',
     '{"op":"add_wall","id":newId,"a":[x,y],"b":[x,y],"t":ft} {"op":"update_wall","id":id,"a":[x,y],"b":[x,y]} {"op":"remove_wall","id":id} (removing a wall removes its openings)',
+    '{"op":"add_vault","room":id or "x0","x1","y0","y1","ridge":y,"eave":ft,"peak":ft} {"op":"remove_vault","id":id} (add_wall/update_wall accept "h" for a low wall; update_room accepts "floorZ")',
     '{"op":"add_room","id":newId,"name":s,"poly":[[x,y],...],"floor":key} {"op":"update_room","id":id,"name":s,"poly":[...]} {"op":"remove_room","id":id}',
     '{"op":"add_fixture","type":t,"x":ft,"y":ft,"w":ft,"d":ft,"h":ft,"facing":"n|s|e|w","label":s,"color":hex,"top":hex,"sink":bool,"cooktop":bool} {"op":"update_fixture","id":id,...} {"op":"remove_fixture","id":id}',
     'Rules: Ops run in order; an op may reference an id created by an earlier op. Keep fixtures inside their room, clear of walls (inner wall face is t/2 from the centreline), doors and walkways (3 ft clear). An opening must fit inside its wall; a new opening replaces any existing opening it overlaps on that wall. To remove only part of a wall, shorten it with update_wall and add_wall for the remaining piece, or add a wide "opening". When rooms merge or change shape, update the room polygons too. For a remodel, remove the old fixtures you are replacing and place new ones with realistic sizes. Do the whole request, do not ask the user to do steps by hand.',

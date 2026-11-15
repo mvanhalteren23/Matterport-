@@ -22,4 +22,12 @@ Open `index.html` in a browser. It needs an internet connection to load three.js
 
 ## Accuracy
 
-The layout is traced from the listing floor plan, so dimensions are approximate. Ceilings are drawn flat at 8 ft (the living room is vaulted in reality), existing finishes are placeholders, and the workshop's position on the lot is a guess. The plan does not show which walls are load-bearing; confirm with a builder or engineer before removing any.
+The as-built model in `src/house.js` is measured from the Matterport scan of the house (model `rfwtuskak8Q`, data from the `1346russelreno` repository):
+
+- Wall positions come from the scan's wall graph and mesh, squared up (the scan is rotated 0.48° from the house axes). The house measures about 58.5 ft east to west.
+- Ceilings are 8 ft, except the living room and office, which share a vaulted ceiling rising to 13 ft at an east–west ridge.
+- The office floor is a 7 in step-up behind a low wall; the carport is about 1.9 ft below the house floor.
+- Window sizes and sill heights come from the scan where it detected them, including the clerestory windows in the west gable.
+- Finishes (wood panelling, parquet, carpet, kitchen counters, brick fireplace and oven column) match the scan's photos.
+
+Door positions and the kitchen and bathroom fixture layout follow the listing floor plan, rescaled to the scan. The workshop's position on the lot is not in the scan and is a guess. The plan does not show which walls are load-bearing; confirm with a builder or engineer before removing any.
