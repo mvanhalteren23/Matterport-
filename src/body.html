@@ -1,0 +1,61 @@
+<div id="app">
+  <header class="bar">
+    <div class="brand">
+      <h1>1346 Russell Road</h1>
+      <div class="sub">Renovation model · 1,279 sq ft house · 684 sq ft workshop</div>
+    </div>
+    <div class="seg" id="viewSeg" role="group" aria-label="View">
+      <button type="button" data-view="doll" aria-pressed="true">Dollhouse</button>
+      <button type="button" data-view="plan" aria-pressed="false">Plan</button>
+      <button type="button" data-view="walk" aria-pressed="false">Walk inside</button>
+    </div>
+    <label class="chk"><input type="checkbox" id="cutChk"> Cut walls low</label>
+    <label class="chk"><input type="checkbox" id="lblChk" checked> Room labels</label>
+    <div class="grow"></div>
+    <div class="tools">
+      <span id="status" role="status"></span>
+      <button type="button" id="undoBtn">Undo</button>
+      <button type="button" id="redoBtn">Redo</button>
+      <button type="button" id="resetBtn">Back to as-built</button>
+    </div>
+  </header>
+  <main>
+    <div id="stage">
+      <canvas id="c" aria-label="3D model of the house"></canvas>
+      <div id="labels"></div>
+      <div id="hint"></div>
+      <div id="resetConfirm" hidden>
+        <span>Discard every change and return to the house as drawn on the floor plan?</span>
+        <div class="btns"><button type="button" id="resetYes" class="danger">Discard changes</button><button type="button" id="resetNo">Keep them</button></div>
+      </div>
+    </div>
+    <aside id="panel">
+      <div id="tabs" role="tablist">
+        <button type="button" role="tab" data-tab="edit" aria-selected="true">Selected</button>
+        <button type="button" role="tab" data-tab="add" aria-selected="false">Add</button>
+        <button type="button" role="tab" data-tab="log" aria-selected="false">Changes<span id="logCount"></span></button>
+      </div>
+      <div>
+        <div class="tab" id="tab-edit"></div>
+        <div class="tab" id="tab-add" hidden></div>
+        <div class="tab" id="tab-log" hidden></div>
+      </div>
+    </aside>
+  </main>
+  <footer id="promptBar">
+    <div id="chat" aria-live="polite"></div>
+    <form id="promptForm">
+      <textarea id="promptBox" rows="1" placeholder="Describe a change: new flooring, a moved door, a bathroom remodel, a kitchen redesign…" aria-label="Describe a change"></textarea>
+      <button type="submit" id="sendBtn">Apply</button>
+    </form>
+    <div id="chips">
+      <button type="button">Wide-plank oak through the living room, dining room and hallway</button>
+      <button type="button">Remodel the bathroom with a walk-in shower and a double vanity</button>
+      <button type="button">Redesign the kitchen with an island and the range on the east wall</button>
+      <button type="button">Open the office up to the living room</button>
+      <button type="button">Add a sliding glass door to the south wall of the dining room</button>
+    </div>
+    <p id="promptNote"></p>
+    <p class="foot">Traced from the listing floor plan, so sizes are approximate. Ceilings are drawn flat at 8 ft (the living room is vaulted), existing finishes are placeholders, and the workshop's position on the lot is a guess.</p>
+  </footer>
+</div>
